@@ -117,28 +117,35 @@ def first_image(props):
 
 # ---------- déclencheur "validé" ----------
 
-def trigger_filter(trigger, schema):
-    """Transforme {"property": ..., "value": ...} en filtre de l'API Notion.
+def trigger_matcher(trigger, schema):
+    """Transforme {"property": ..., "value": ...} en fonction page -> validée ou non.
 
     - case à cocher : cochée (pas besoin de "value")
     - sélection / état : égal à "value"
     - sélection multiple : contient "value" (ou toutes les valeurs si c'est une liste)
+
+    On vérifie nous-mêmes au lieu d'utiliser les filtres de l'API Notion : ceux-ci
+    peuvent ignorer une colonne récemment créée pendant longtemps.
     """
     name = trigger["property"]
     if name not in schema:
         raise ValueError(f"La colonne « {name} » n'existe pas dans la base (colonnes : {', '.join(schema)})")
     ptype = schema[name]["type"]
     value = trigger.get("value")
+
+    def prop(page):
+        return (page["properties"].get(name) or {}).get(ptype)
+
     if ptype == "checkbox":
-        return {"property": name, "checkbox": {"equals": value if isinstance(value, bool) else True}}
+        expected = value if isinstance(value, bool) else True
+        return lambda page: prop(page) is expected
     if value is None:
         raise ValueError(f"Il faut une \"value\" pour la colonne « {name} » ({ptype})")
     if ptype in ("select", "status"):
-        return {"property": name, ptype: {"equals": value}}
+        return lambda page: (prop(page) or {}).get("name") == value
     if ptype == "multi_select":
         values = value if isinstance(value, list) else [value]
-        conds = [{"property": name, "multi_select": {"contains": v}} for v in values]
-        return conds[0] if len(conds) == 1 else {"and": conds}
+        return lambda page: set(values) <= {o["name"] for o in prop(page) or []}
     raise ValueError(f"Type de colonne non géré pour le déclencheur : {ptype}")
 
 
@@ -176,13 +183,6 @@ class Notion:
             if not data.get("has_more"):
                 return
             body["start_cursor"] = data["next_cursor"]
-
-    def latest(self, db_id, filt=None):
-        body = {"sorts": [{"timestamp": "last_edited_time", "direction": "descending"}], "page_size": 1}
-        if filt:
-            body["filter"] = filt
-        results = self._req("POST", f"/databases/{db_id}/query", json=body)["results"]
-        return results[0] if results else None
 
 
 # ---------- Discord ----------
@@ -278,23 +278,23 @@ class Watcher:
         self.db_id = mapping["database_id"]
         title, schema = notion.database(self.db_id)
         self.name = mapping.get("name") or title
-        self.filter = trigger_filter(mapping["trigger"], schema) if mapping.get("trigger") else None
-        self.key = self.db_id + (":" + json.dumps(mapping["trigger"], sort_keys=True) if self.filter else "")
+        self.match = trigger_matcher(mapping["trigger"], schema) if mapping.get("trigger") else None
+        self.key = self.db_id + (":" + json.dumps(mapping["trigger"], sort_keys=True) if self.match else "")
 
     def _pages(self, since=None):
-        ts = "last_edited_time" if self.filter else "created_time"
-        conds = [self.filter] if self.filter else []
+        if self.match:
+            # Mode validation : on relit toute la base et on garde les pages validées
+            pages = self.notion.query(self.db_id, {"sorts": [{"timestamp": "last_edited_time", "direction": "ascending"}]})
+            return [p for p in pages if self.match(p)]
+        body = {"sorts": [{"timestamp": "created_time", "direction": "ascending"}]}
         if since:
-            conds.append({"timestamp": ts, ts: {"on_or_after": iso(since)}})
-        body = {"sorts": [{"timestamp": ts, "direction": "ascending"}]}
-        if conds:
-            body["filter"] = conds[0] if len(conds) == 1 else {"and": conds}
-        return self.notion.query(self.db_id, body)
+            body["filter"] = {"timestamp": "created_time", "created_time": {"on_or_after": iso(since)}}
+        return list(self.notion.query(self.db_id, body))
 
     def init_state(self, state):
         """Premier lancement : ce qui existe déjà est considéré comme envoyé (pas de spam)."""
         now = datetime.now(timezone.utc)
-        pages = self._pages(None if self.filter else now - LOOKBACK)
+        pages = self._pages(None if self.match else now - LOOKBACK)
         state[self.key] = {"since": iso(now), "seen": {p["id"]: p["created_time"] for p in pages}}
 
     def check(self, st):
@@ -308,12 +308,13 @@ class Watcher:
             st["seen"][page["id"]] = page["created_time"]
             log.info("[%s] envoyé : %s", self.name, shown(page))
         st["since"] = iso(now)
-        if not self.filter:  # en mode validation on garde tout pour ne jamais renvoyer deux fois
+        if not self.match:  # en mode validation on garde tout pour ne jamais renvoyer deux fois
             cutoff = now - SEEN_TTL
             st["seen"] = {k: v for k, v in st["seen"].items() if parse_ts(v) > cutoff}
 
     def test(self):
-        page = self.notion.latest(self.db_id, self.filter)
+        pages = self._pages()
+        page = max(pages, key=lambda p: p["last_edited_time"]) if pages else None
         if not page:
             log.warning("[%s] aucune page concernée, rien à envoyer", self.name)
             return
@@ -366,7 +367,7 @@ def main():
             log.error("[%s] ignorée : %s", m.get("name") or m["database_id"], e)
             continue
         watchers.append(w)
-        what = f"quand « {m['trigger']['property']} » est validé" if w.filter else "à chaque nouvelle page"
+        what = f"quand « {m['trigger']['property']} » est validé" if w.match else "à chaque nouvelle page"
         log.info("Base surveillée : %s (%s)", w.name, what)
 
     if not watchers:
