@@ -360,14 +360,24 @@ def main():
 
     watchers = []
     for m in cfg["databases"]:
-        w = Watcher(notion, m)
+        try:
+            w = Watcher(notion, m)
+        except Exception as e:  # une base mal configurée ne bloque pas les autres
+            log.error("[%s] ignorée : %s", m.get("name") or m["database_id"], e)
+            continue
         watchers.append(w)
         what = f"quand « {m['trigger']['property']} » est validé" if w.filter else "à chaque nouvelle page"
         log.info("Base surveillée : %s (%s)", w.name, what)
 
+    if not watchers:
+        sys.exit("Aucune base utilisable, voir les erreurs ci-dessus.")
+
     if args.test:
         for w in watchers:
-            w.test()
+            try:
+                w.test()
+            except Exception as e:
+                log.error("[%s] %s", w.name, e)
         return
 
     state = load_state()
