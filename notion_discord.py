@@ -291,10 +291,16 @@ class Watcher:
             body["filter"] = {"timestamp": "created_time", "created_time": {"on_or_after": iso(since)}}
         return list(self.notion.query(self.db_id, body))
 
-    def init_state(self, state):
-        """Premier lancement : ce qui existe déjà est considéré comme envoyé (pas de spam)."""
+    def init_state(self, state, start_from=None):
+        """Premier lancement : ce qui existe déjà est considéré comme envoyé (pas de spam).
+
+        Avec "start_from" (date ISO), les pages modifiées depuis cette date restent à envoyer.
+        """
         now = datetime.now(timezone.utc)
         pages = self._pages(None if self.match else now - LOOKBACK)
+        if start_from:
+            start = parse_ts(start_from)
+            pages = [p for p in pages if parse_ts(p["last_edited_time"]) < start]
         state[self.key] = {"since": iso(now), "seen": {p["id"]: p["created_time"] for p in pages}}
 
     def check(self, st):
@@ -384,7 +390,7 @@ def main():
     state = load_state()
     for w in watchers:
         if w.key not in state:
-            w.init_state(state)
+            w.init_state(state, cfg.get("start_from"))
     save_state(state)
 
     interval = max(10, int(cfg.get("poll_interval_seconds", 30)))
