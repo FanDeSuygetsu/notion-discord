@@ -1,0 +1,54 @@
+{
+  "notion_token": "ntn_xxx",
+  "poll_interval_seconds": 30,
+
+  "defaults": {
+    "trigger": { "property": "Validé" },
+    "hide_properties": ["Validé", "Personne assignée", "Date d’échéance", "Niveau d’effort"]
+  },
+
+  "databases": [
+    {
+      "name": "Mutateur",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c38016b6f2de680fb8a203",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/mutateur",
+      "message": "✅ Nouveau mutateur validé !",
+      "color": "#F1C40F"
+    },
+    {
+      "name": "Items",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c380f7a4caf5aeb2b2b3cc",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/items",
+      "message": "✅ Nouvel item validé !",
+      "color": "#E91E63"
+    },
+    {
+      "name": "Personnages",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c3802eb8a6d828aa42dbba",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/personnages",
+      "message": "✅ Nouveau personnage validé !",
+      "color": "#2ECC71"
+    },
+    {
+      "name": "Statut",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c38083b07ef9057ab20f9c",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/statut",
+      "message": "✅ Nouveau statut validé !",
+      "color": "#E74C3C"
+    },
+    {
+      "name": "Mini Jeu",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c38017882ed18c6eed8d26",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/mini-jeu",
+      "message": "✅ Nouveau mini-jeu validé !",
+      "color": "#3498DB"
+    },
+    {
+      "name": "Scénario Couloirs",
+      "database_id": "https://app.notion.com/p/3eb8d512b6c38008a004fc3026ba29a1",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/scenario-couloirs",
+      "message": "✅ Nouveau scénario de couloir validé !",
+      "color": "#9B59B6"
+    }
+  ]
+}
