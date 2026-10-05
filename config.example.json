@@ -4,6 +4,7 @@
 
   "defaults": {
     "trigger": { "property": "Validé" },
+    "on_create": true,
     "hide_properties": ["Validé", "Personne assignée", "Date d’échéance", "Niveau d’effort"]
   },
 
@@ -13,6 +14,7 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c38016b6f2de680fb8a203",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/mutateur",
       "message": "✅ Nouveau mutateur validé !",
+      "create_message": "🆕 Nouveau mutateur ajouté !",
       "color": "#F1C40F"
     },
     {
@@ -20,6 +22,7 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c380f7a4caf5aeb2b2b3cc",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/items",
       "message": "✅ Nouvel item validé !",
+      "create_message": "🆕 Nouvel item ajouté !",
       "color": "#E91E63"
     },
     {
@@ -27,6 +30,7 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c3802eb8a6d828aa42dbba",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/personnages",
       "message": "✅ Nouveau personnage validé !",
+      "create_message": "🆕 Nouveau personnage ajouté !",
       "color": "#2ECC71"
     },
     {
@@ -34,6 +38,7 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c38083b07ef9057ab20f9c",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/statut",
       "message": "✅ Nouveau statut validé !",
+      "create_message": "🆕 Nouveau statut ajouté !",
       "color": "#E74C3C"
     },
     {
@@ -41,6 +46,7 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c38017882ed18c6eed8d26",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/mini-jeu",
       "message": "✅ Nouveau mini-jeu validé !",
+      "create_message": "🆕 Nouveau mini-jeu ajouté !",
       "color": "#3498DB"
     },
     {
@@ -48,7 +54,16 @@
       "database_id": "https://app.notion.com/p/3eb8d512b6c38008a004fc3026ba29a1",
       "webhook_url": "https://discord.com/api/webhooks/XXXX/scenario-couloirs",
       "message": "✅ Nouveau scénario de couloir validé !",
+      "create_message": "🆕 Nouveau scénario de couloir ajouté !",
       "color": "#9B59B6"
+    },
+    {
+      "name": "Planificateur hebdomadaire",
+      "page_id": "https://app.notion.com/p/6058d512b6c38225aa6601148b5debe4",
+      "webhook_url": "https://discord.com/api/webhooks/XXXX/planificateur",
+      "message": "✅ Tâche cochée !",
+      "create_message": "🆕 Nouvelle tâche au planning !",
+      "color": "#95A5A6"
     }
   ]
 }

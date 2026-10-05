@@ -48,6 +48,13 @@ Sans `trigger`, chaque nouvelle page est envoyée. Avec `trigger`, une page est 
 
 Si tu décoches puis recoches une tâche, elle n'est pas renvoyée.
 
+Ajoute `"on_create": true` (dans `defaults` ou dans une base) pour **aussi** annoncer chaque nouvelle tâche dès sa création, avec le texte de `create_message` (défaut : « 🆕 Nouvelle tâche ajoutée ! »).
+
+### Une page avec des cases à cocher (ex. planificateur)
+Au lieu de `database_id`, mets `page_id` (le lien de la page). Le bot annonce chaque nouvelle case remplie
+(`create_message`) et chaque case cochée (`message`), avec la rubrique (titre de la colonne) et qui l'a fait.
+Une case décochée puis recochée est annoncée de nouveau.
+
 ### Plusieurs pages, plusieurs channels
 Ajoute un bloc par base dans `databases`, chacun avec le webhook de son channel (Mutateur → #mutateur, etc.).
 

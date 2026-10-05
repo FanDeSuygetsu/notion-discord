@@ -171,6 +171,24 @@ class Notion:
             return r.json()
         raise RuntimeError("Notion : trop de tentatives échouées")
 
+    def children(self, block_id):
+        params = {"page_size": 100}
+        while True:
+            data = self._req("GET", f"/blocks/{block_id}/children", params=params)
+            yield from data["results"]
+            if not data.get("has_more"):
+                return
+            params["start_cursor"] = data["next_cursor"]
+
+    def user_name(self, user_id, _cache={}):
+        """Nom d'un membre Notion, ou None si l'intégration n'a pas le droit de le lire."""
+        if user_id not in _cache:
+            try:
+                _cache[user_id] = self._req("GET", f"/users/{user_id}").get("name")
+            except RuntimeError:
+                _cache[user_id] = None
+        return _cache[user_id]
+
     def database(self, db_id):
         data = self._req("GET", f"/databases/{db_id}")
         return plain(data.get("title")) or "Notion", data["properties"]
@@ -267,7 +285,7 @@ def save_state(state):
 # ---------- logique ----------
 
 class Watcher:
-    """Surveille une base. Deux modes :
+    """Surveille une base. Deux modes (une base avec "on_create" en a deux) :
     - sans "trigger" : envoie chaque nouvelle page créée
     - avec "trigger" : envoie une page quand elle devient validée (une seule fois par page)
     """
@@ -281,15 +299,17 @@ class Watcher:
         self.match = trigger_matcher(mapping["trigger"], schema) if mapping.get("trigger") else None
         self.key = self.db_id + (":" + json.dumps(mapping["trigger"], sort_keys=True) if self.match else "")
 
+    def describe(self):
+        return f"quand « {self.m['trigger']['property']} » est validé" if self.match else "à chaque nouvelle page"
+
     def _pages(self, since=None):
         if self.match:
             # Mode validation : on relit toute la base et on garde les pages validées
             pages = self.notion.query(self.db_id, {"sorts": [{"timestamp": "last_edited_time", "direction": "ascending"}]})
             return [p for p in pages if self.match(p)]
-        body = {"sorts": [{"timestamp": "created_time", "direction": "ascending"}]}
-        if since:
-            body["filter"] = {"timestamp": "created_time", "created_time": {"on_or_after": iso(since)}}
-        return list(self.notion.query(self.db_id, body))
+        # Mode création : même principe, on filtre nous-mêmes sur la date de création
+        pages = self.notion.query(self.db_id, {"sorts": [{"timestamp": "created_time", "direction": "ascending"}]})
+        return [p for p in pages if not since or parse_ts(p["created_time"]) >= since]
 
     def init_state(self, state, start_from=None):
         """Premier lancement : ce qui existe déjà est considéré comme envoyé (pas de spam).
@@ -328,6 +348,114 @@ class Watcher:
         log.info("[%s] test envoyé : %s", self.name, shown(page))
 
 
+EDIT_GRACE = timedelta(minutes=2)  # on n'annonce pas une case en train d'être tapée
+CONTAINERS = {"column_list", "column", "toggle", "callout", "synced_block", "to_do",
+              "bulleted_list_item", "numbered_list_item", "quote"}
+
+
+class PageTodoWatcher:
+    """Surveille les cases à cocher d'une page Notion (ex. un planificateur hebdomadaire) :
+    annonce chaque nouvelle case remplie et chaque case cochée."""
+
+    match = None
+
+    def __init__(self, notion, mapping):
+        self.notion = notion
+        self.m = mapping
+        self.page_id = normalize_id(mapping["page_id"])
+        page = notion._req("GET", f"/pages/{self.page_id}")
+        self.url = page["url"]
+        title = next((plain(p["title"]) for p in page["properties"].values() if p["type"] == "title"), "")
+        self.name = mapping.get("name") or title or "Notion"
+        self.key = "page:" + self.page_id
+
+    def describe(self):
+        return "cases ajoutées et cochées"
+
+    def _todos(self, block_id=None, section=None):
+        """Toutes les cases de la page, avec leur rubrique (titre de colonne + « prioritaire »…)."""
+        heading, sub = section, None
+        for b in self.notion.children(block_id or self.page_id):
+            t = b["type"]
+            if t in ("heading_1", "heading_2", "heading_3"):
+                heading, sub = plain(b[t]["rich_text"]).strip() or heading, None
+            elif t == "quote" and not b.get("has_children"):
+                sub = plain(b[t]["rich_text"]).strip() or sub
+            label = " · ".join(x for x in (heading, sub) if x) or None
+            if t == "to_do":
+                yield b, label
+            if b.get("has_children") and t in CONTAINERS:
+                # une nouvelle colonne a son propre titre ; sous une case, on garde la rubrique
+                yield from self._todos(b["id"], None if t in ("column_list", "column") else label)
+
+    def _send(self, block, label, checked):
+        text = plain(block["to_do"]["rich_text"]).strip()
+        who_id = (block["last_edited_by"] if checked else block["created_by"]).get("id")
+        who = self.notion.user_name(who_id) if who_id else None
+        embed = {
+            "title": text[:256],
+            "url": f"{self.url}#{block['id'].replace('-', '')}",
+            "color": int(self.m.get("color", "#95A5A6").lstrip("#"), 16),
+            "fields": [],
+            "footer": {"text": f"📒 {self.name}"},
+            "timestamp": block["last_edited_time"],
+        }
+        if label:
+            embed["fields"].append({"name": "Rubrique", "value": label[:1024], "inline": True})
+        if who:
+            embed["fields"].append({"name": "Cochée par" if checked else "Ajoutée par", "value": who, "inline": True})
+        content = self.m.get("message", "✅ Tâche cochée !") if checked else \
+            self.m.get("create_message", "🆕 Nouvelle tâche ajoutée !")
+        payload = {"content": content, "embeds": [embed], "username": self.m.get("username", "Notion")}
+        if self.m.get("avatar_url"):
+            payload["avatar_url"] = self.m["avatar_url"]
+        send_discord(self.m["webhook_url"], payload)
+        log.info("[%s] envoyé (%s) : %s", self.name, "cochée" if checked else "ajoutée",
+                 "1 tâche" if os.environ.get("GITHUB_ACTIONS") else text)
+
+    def init_state(self, state, start_from=None):
+        """Premier lancement : ce qui existe déjà est considéré comme annoncé (pas de spam)."""
+        known, checked = {}, []
+        for b, _ in self._todos():
+            if plain(b["to_do"]["rich_text"]).strip():
+                known[b["id"]] = True
+                if b["to_do"]["checked"]:
+                    checked.append(b["id"])
+        state[self.key] = {"known": known, "checked": checked}
+
+    def check(self, st):
+        now = datetime.now(timezone.utc)
+        known, checked = st["known"], set(st["checked"])
+        present = set()
+        for b, label in self._todos():
+            if not plain(b["to_do"]["rich_text"]).strip():
+                continue  # case vide (pas encore remplie)
+            bid = b["id"]
+            present.add(bid)
+            stable = now - parse_ts(b["last_edited_time"]) >= EDIT_GRACE
+            if bid not in known:
+                if not stable:
+                    continue  # en train d'être tapée : on réessaie au prochain tour
+                self._send(b, label, checked=False)
+                known[bid] = True
+            if b["to_do"]["checked"]:
+                if bid not in checked and stable:
+                    self._send(b, label, checked=True)
+                    checked.add(bid)
+            else:
+                checked.discard(bid)  # décochée : sera de nouveau annoncée si on la recoche
+        st["known"] = {k: v for k, v in known.items() if k in present}
+        st["checked"] = sorted(checked & present)
+
+    def test(self):
+        todos = [(b, l) for b, l in self._todos() if plain(b["to_do"]["rich_text"]).strip()]
+        if not todos:
+            log.warning("[%s] aucune case à envoyer", self.name)
+            return
+        b, label = max(todos, key=lambda x: x[0]["last_edited_time"])
+        self._send(b, label, checked=b["to_do"]["checked"])
+
+
 def load_config():
     # Sur GitHub, toute la config est dans le secret CONFIG_JSON
     raw = os.environ.get("CONFIG_JSON")
@@ -348,10 +476,22 @@ def load_config():
     # "defaults" s'applique à toutes les bases, chaque base peut le surcharger
     defaults = cfg.get("defaults", {})
     cfg["databases"] = [{**defaults, **m} for m in cfg["databases"]]
+    # "on_create": true sur une base validée -> on annonce aussi chaque nouvelle tâche
+    for m in list(cfg["databases"]):
+        if m.get("on_create") and m.get("trigger") and "page_id" not in m:
+            created = {k: v for k, v in m.items() if k != "trigger"}
+            created["message"] = m.get("create_message", "🆕 Nouvelle tâche ajoutée !")
+            cfg["databases"].append(created)
+    usable = []
     for m in cfg["databases"]:
+        label = m.get("name") or m.get("database_id") or m.get("page_id")
         if not m.get("webhook_url") or "XXXX" in m["webhook_url"]:
-            sys.exit(f"webhook_url manquant pour la base {m.get('name') or m.get('database_id')}")
-        m["database_id"] = normalize_id(m["database_id"])
+            log.error("[%s] ignorée : webhook_url manquant dans la config", label)
+            continue
+        if "page_id" not in m:
+            m["database_id"] = normalize_id(m["database_id"])
+        usable.append(m)
+    cfg["databases"] = usable
     return cfg
 
 
@@ -368,13 +508,12 @@ def main():
     watchers = []
     for m in cfg["databases"]:
         try:
-            w = Watcher(notion, m)
+            w = (PageTodoWatcher if "page_id" in m else Watcher)(notion, m)
         except Exception as e:  # une base mal configurée ne bloque pas les autres
-            log.error("[%s] ignorée : %s", m.get("name") or m["database_id"], e)
+            log.error("[%s] ignorée : %s", m.get("name") or m.get("database_id") or m.get("page_id"), e)
             continue
         watchers.append(w)
-        what = f"quand « {m['trigger']['property']} » est validé" if w.match else "à chaque nouvelle page"
-        log.info("Base surveillée : %s (%s)", w.name, what)
+        log.info("Surveillé : %s (%s)", w.name, w.describe())
 
     if not watchers:
         sys.exit("Aucune base utilisable, voir les erreurs ci-dessus.")
